@@ -1,16 +1,17 @@
 from tabulate import tabulate
 from .user_manager import UserManager
 from .project_manager import ProjectManager
-# from .image_item_manager import ImageItemManager
+from .image_item_manager import ImageItemManager
 # from .data_training_manager import DataTrainingManager
 # from .training_template_manager import TrainingTemplateManager
 # from .training_info_manager import TrainingInfoManager
-# from .annotation_manager import AnnotationManager
+from .annotation_manager import AnnotationManager
 import os
+import threading
 import sqlite3
 # //////////////////////////////////////
 
-
+lock = threading.Lock()
 class DBController:
     _instance = None
     def __new__(cls):
@@ -19,11 +20,11 @@ class DBController:
         return cls._instance
 
     def __init__(self):
-        self.connection = sqlite3.connect('database/ai_studio_db.db')
+        self.connection = sqlite3.connect('database/ai_studio_db.db', check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.cursor = self.connection.cursor()
         # init components
-        self.init_tables()
+        # self.init_tables()
         self.init_manangers()
 
     def init_tables(self):
@@ -45,6 +46,8 @@ class DBController:
                 user_id INTEGER NOT NULL,
                 project_name TEXT NOT NULL,
                 project_type TEXT NOT NULL,
+                avatar_path TEXT,
+                avatar_name TEXT,
                 classes TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -70,10 +73,10 @@ class DBController:
             CREATE TABLE IF NOT EXISTS versions (
                 version_id INTEGER PRIMARY KEY,
                 project_id INTEGER NOT NULL,
-                
+                version_name TEXT NOT NULL,
                 FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
             )
-        ''') # version_name TEXT NOT NULL,
+        ''')
         
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS data_processing (
@@ -127,23 +130,32 @@ class DBController:
     def init_manangers(self):
         self.user_manager = UserManager()
         self.project_manager = ProjectManager()
-        # self.image_item_manager = ImageItemManager(self.image_item_manager)
-        
+        self.image_item_manager = ImageItemManager()
         # self.data_training_manager = DataTrainingManager(self.data_training_table)
         # self.training_template_manager = TrainingTemplateManager(self.training_template_table)
-        # self.annotation_manager = AnnotationManager(self.annotation_table)
+        self.annotation_manager = AnnotationManager()
         # self.training_info_manager = TrainingInfoManager(self.training_info_table)
     def execute_query(self, query, params=()):
-        self.cursor.execute(query, params)
+        try:
+            lock.acquire(True)
+            self.cursor.execute(query, params)
+        finally:
+            lock.release()
         if query.strip().upper().startswith("SELECT"):
             return self.cursor.fetchall()
         else:
             self.connection.commit()
             return self.cursor.rowcount
+        
 
     def execute_query_single(self, query, params=()):
-        self.cursor.execute(query, params)
+        try:
+            lock.acquire(True)
+            self.cursor.execute(query, params)
+        finally:
+            lock.release()
         return self.cursor.fetchone()
+       
     
     def commit(self):
         self.connection.commit()
@@ -152,15 +164,21 @@ class DBController:
         query = "SELECT name FROM sqlite_master WHERE type='table';"
         self.cursor.execute(query)
         tables = self.cursor.fetchall()
-        return [table["name"] for table in tables]
+        table_names = [table["name"] for table in tables]
+        table_data = [["Table Name"]] + [[name] for name in table_names]
+        print(tabulate(table_data, headers="firstrow", tablefmt="grid"))
     
     def desc_table(self, table_name):
         query = f"PRAGMA table_info({table_name});"
         self.cursor.execute(query)
         columns = self.cursor.fetchall()
-        for column in columns:
-            print(dict(column))
-        # return columns
+        column_data = [["Column ID", "Name", "Type", "Not Null", "Default Value", "Primary Key"]]
+        for col in columns:
+            column_data.append([
+                col["cid"], col["name"], col["type"], 
+                bool(col["notnull"]), col["dflt_value"], bool(col["pk"])
+            ])
+        print(tabulate(column_data, headers="firstrow", tablefmt="grid"))
         
     def print_table(self, table_name):
         # Get the column names and data
